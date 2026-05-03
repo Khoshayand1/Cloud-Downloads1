@@ -1,0 +1,63 @@
+
+name: 'Cloud Leecher Engine'
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        required: true
+        type: string
+      folder_name:
+        required: true
+        type: string
+      safe_mode:
+        required: true
+        type: string
+permissions:
+  contents: write
+jobs:
+  leech:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Process File
+        run: |
+          sudo apt-get update && sudo apt-get install -y zip
+          URL="${{ github.event.inputs.file_url }}"
+          FOLDER="${{ github.event.inputs.folder_name }}"
+          SAFE_MODE="${{ github.event.inputs.safe_mode }}"
+          
+          RAW_NAME=$(basename "${URL%%\?*}" | sed 's/%20/ /g')
+          EXT="${RAW_NAME##*.}"
+          
+          if [ "$SAFE_MODE" == "true" ]; then
+            FINAL_FILE="$FOLDER.$EXT"
+          else
+            NAME_NO_EXT="${RAW_NAME%.*}"
+            FINAL_FILE="$NAME_NO_EXT.$EXT"
+          fi
+          
+          curl -L --fail --retry 5 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" --progress-bar -o "temp_download" "$URL"
+          
+          mkdir -p wrap_dir
+          mv "temp_download" "wrap_dir/$FINAL_FILE"
+          cd wrap_dir
+          zip -0 "../$FOLDER.zip" "$FINAL_FILE"
+          cd ..
+          
+          mkdir -p "downloads/$FOLDER"
+          split -b 90M -d -a 3 "$FOLDER.zip" "downloads/$FOLDER/chunk_"
+          
+          a=1
+          for i in downloads/$FOLDER/chunk_*; do
+            new=$(printf "downloads/$FOLDER/$FOLDER.zip.%03d" "$a")
+            mv -- "$i" "$new"
+            let a=a+1
+          done
+          
+          git config user.name "OctoFetchBot"; git config user.email "bot@octofetch.local"
+          git pull origin main || true
+          git add downloads/
+          git commit -m "Add $FOLDER ZIP Archive" || echo "No changes"
+          git push
